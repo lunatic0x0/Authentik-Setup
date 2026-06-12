@@ -1,6 +1,6 @@
 # Authentik on AWS — Step-by-Step Setup Guide
 
-This walks you through deploying Authentik on a hardened EC2 instance in the SentinelOne lab AWS account, then federating it with AWS IAM Identity Center. Written for someone new to both Terraform and Authentik — every step explained, no skipped detail.
+This walks you through deploying Authentik on a hardened EC2 instance in the lab AWS account, then federating it with AWS IAM Identity Center. Written for someone new to both Terraform and Authentik — every step explained, no skipped detail.
 
 **What you end up with:** an Ubuntu 24.04 EC2 (matching MITRE ER8) running Authentik behind Caddy with a real Let's Encrypt TLS cert, no SSH, IMDSv2-only, encrypted disk, VPC flow logs to CloudWatch. About **$37/mo** while running 24/7. Full teardown with one command.
 

@@ -79,7 +79,7 @@ The web UI also surfaces these at **Events → Logs** and **Events → System Ta
 
 ---
 
-## 6. Connecting local Authentik to your SentinelOne AWS account
+## 6. Connecting local Authentik to your AWS account
 
 **Short answer: yes, it can be done — but AWS needs to reach your Authentik metadata URL.** That's the gotcha with running an IdP on a laptop. Three patterns, in order of how closely they likely match the MITRE ER8 setup:
 
@@ -109,7 +109,7 @@ Authentik exposes an OIDC issuer; AWS supports OIDC IdPs for role assumption (`s
 
 Start with **Option A (Identity Center via SAML)**, fronted by a **Cloudflare Tunnel**. It mirrors the realistic enterprise topology MITRE is likely emulating, gives you both Authentik audit logs and CloudTrail `sts:AssumeRoleWithSAML` events to correlate against, and the tunnel sidesteps the "AWS can't reach my laptop" wall without opening any inbound ports.
 
-What you'll need from the SentinelOne AWS lab:
+What you'll need from the AWS lab:
 
 1. Confirmation Identity Center is enabled (or willingness to enable it) in the lab account.
 2. Permission to add an external identity provider in Identity Center.
