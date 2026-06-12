@@ -1,0 +1,205 @@
+#cloud-config
+# Bootstraps an Ubuntu 24.04 host into a hardened Authentik IdP.
+# - Disables password SSH (we don't open 22 anyway)
+# - Installs Docker + compose plugin
+# - Writes docker-compose stack with Caddy in front of Authentik
+# - Caddy auto-issues a Let's Encrypt cert for ${authentik_hostname}
+#
+# After ~3-5 minutes, Authentik is reachable at https://${authentik_hostname}/
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - jq
+  - unattended-upgrades
+  - fail2ban
+  - auditd
+  - awscli
+
+write_files:
+  - path: /opt/authentik/.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      AUTHENTIK_TAG=${authentik_tag}
+      AUTHENTIK_HOSTNAME=${authentik_hostname}
+      PG_USER=authentik
+      PG_DB=authentik
+      PG_PASS=${pg_password}
+      AUTHENTIK_SECRET_KEY=${secret_key}
+      AUTHENTIK_LOG_LEVEL=info
+
+  - path: /opt/authentik/Caddyfile
+    permissions: "0644"
+    owner: root:root
+    content: |
+      {
+        email   admin@${authentik_hostname}
+        # Set to https://acme-staging-v02.api.letsencrypt.org/directory while
+        # iterating, to avoid the LE production rate limit (5 certs/week).
+        # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+      }
+
+      ${authentik_hostname} {
+        encode zstd gzip
+        reverse_proxy authentik-server:9000 {
+          header_up Host {host}
+          header_up X-Forwarded-For {remote_host}
+          header_up X-Forwarded-Proto {scheme}
+        }
+        log {
+          output stdout
+          format json
+        }
+      }
+
+  - path: /opt/authentik/docker-compose.yml
+    permissions: "0644"
+    owner: root:root
+    content: |
+      ---
+      x-authentik-env: &authentik-env
+        AUTHENTIK_REDIS__HOST: redis
+        AUTHENTIK_POSTGRESQL__HOST: postgresql
+        AUTHENTIK_POSTGRESQL__USER: $${PG_USER}
+        AUTHENTIK_POSTGRESQL__NAME: $${PG_DB}
+        AUTHENTIK_POSTGRESQL__PASSWORD: $${PG_PASS}
+        AUTHENTIK_SECRET_KEY: $${AUTHENTIK_SECRET_KEY}
+        AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+        AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+        AUTHENTIK_LOG_LEVEL: $${AUTHENTIK_LOG_LEVEL}
+        # Caddy terminates TLS, so tell Authentik to trust X-Forwarded-*
+        AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS: 172.16.0.0/12,10.0.0.0/8
+
+      services:
+        postgresql:
+          image: docker.io/library/postgres:16-alpine
+          restart: unless-stopped
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -d $$POSTGRES_DB -U $$POSTGRES_USER"]
+            interval: 30s
+            timeout: 5s
+            retries: 5
+            start_period: 20s
+          volumes:
+            - /opt/authentik/data/postgres:/var/lib/postgresql/data
+          environment:
+            POSTGRES_PASSWORD: $${PG_PASS}
+            POSTGRES_USER: $${PG_USER}
+            POSTGRES_DB: $${PG_DB}
+
+        redis:
+          image: docker.io/library/redis:7-alpine
+          command: --save 60 1 --loglevel warning
+          restart: unless-stopped
+          healthcheck:
+            test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+            interval: 30s
+            timeout: 3s
+            retries: 5
+          volumes:
+            - /opt/authentik/data/redis:/data
+
+        authentik-server:
+          image: ghcr.io/goauthentik/server:$${AUTHENTIK_TAG}
+          restart: unless-stopped
+          command: server
+          environment: *authentik-env
+          volumes:
+            - /opt/authentik/data/media:/media
+            - /opt/authentik/data/templates:/templates
+          depends_on:
+            postgresql:
+              condition: service_healthy
+            redis:
+              condition: service_healthy
+
+        authentik-worker:
+          image: ghcr.io/goauthentik/server:$${AUTHENTIK_TAG}
+          restart: unless-stopped
+          command: worker
+          environment: *authentik-env
+          user: root
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /opt/authentik/data/media:/media
+            - /opt/authentik/data/certs:/certs
+            - /opt/authentik/data/templates:/templates
+          depends_on:
+            postgresql:
+              condition: service_healthy
+            redis:
+              condition: service_healthy
+
+        caddy:
+          image: docker.io/library/caddy:2-alpine
+          restart: unless-stopped
+          ports:
+            - "80:80"
+            - "443:443"
+          volumes:
+            - /opt/authentik/Caddyfile:/etc/caddy/Caddyfile:ro
+            - /opt/authentik/data/caddy/data:/data
+            - /opt/authentik/data/caddy/config:/config
+          depends_on:
+            - authentik-server
+
+  - path: /etc/apt/apt.conf.d/52unattended-upgrades-local
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Allowed-Origins {
+        "$${distro_id}:$${distro_codename}-security";
+      };
+
+  - path: /etc/systemd/system/authentik.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Authentik IdP (docker compose)
+      After=docker.service
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      WorkingDirectory=/opt/authentik
+      EnvironmentFile=/opt/authentik/.env
+      ExecStart=/usr/bin/docker compose up -d
+      ExecStop=/usr/bin/docker compose down
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # ---- Docker install (official repo) ----
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update -y
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  # ---- prep directories ----
+  - mkdir -p /opt/authentik/data/{postgres,redis,media,templates,certs,caddy/data,caddy/config}
+  - chmod -R 700 /opt/authentik
+  # ---- pull + start ----
+  - cd /opt/authentik && docker compose pull
+  - systemctl daemon-reload
+  - systemctl enable --now authentik.service
+  # ---- harden a couple of OS bits ----
+  - systemctl enable --now unattended-upgrades
+  - systemctl enable --now fail2ban
+  - systemctl enable --now auditd
+  # Disable password auth even though port 22 is closed at the SG.
+  - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+  - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+  - systemctl restart ssh || true
+  # ---- breadcrumb ----
+  - echo "authentik bootstrap finished at $(date -u)" > /opt/authentik/.bootstrapped
+
+final_message: "Authentik IdP cloud-init complete. Caddy issues a Let's Encrypt cert on first connection — give it 3-5 minutes."

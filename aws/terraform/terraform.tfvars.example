@@ -1,0 +1,48 @@
+# Copy this file to terraform.tfvars and edit. terraform.tfvars is auto-loaded
+# by `terraform plan` / `terraform apply` — you do not need to pass it explicitly.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Everything here has a sensible default in variables.tf. You only need to
+# override what's specific to your environment.
+
+# --- Required-ish ---
+
+# Region where the IdP will live. Pick one close to where you'll be testing from.
+aws_region = "us-east-1"
+
+# Tagged on every resource — set to your handle so anyone in the account
+# can tell who owns this.
+owner_tag = "AuthentikOwner"
+
+# --- Network ---
+
+# CIDR for the IdP VPC. Change only if 10.50.0.0/16 collides with something
+# else in your account.
+vpc_cidr           = "10.50.0.0/16"
+public_subnet_cidr = "10.50.1.0/24"
+
+# --- Compute ---
+
+# t3.medium is the minimum I'd recommend (2 vCPU, 4 GB RAM).
+instance_type  = "t3.medium"
+root_volume_gb = 30
+
+# Authentik image tag — bump when newer releases ship. Check current latest:
+#   curl -s https://api.github.com/repos/goauthentik/authentik/releases/latest | jq -r .tag_name
+# Or browse https://github.com/goauthentik/authentik/releases
+# Always pin a specific tag (never use "latest") so deploys are reproducible.
+authentik_image_tag = "2025.10"
+
+# --- Access control ---
+
+# Who can reach 80/443. Leave as 0.0.0.0/0 so AWS Identity Center can fetch
+# SAML metadata. Tighten later by adding a path-based ACL or WAF.
+allowed_admin_cidrs = ["0.0.0.0/0"]
+
+# --- Optional knobs (omit to use defaults) ---
+
+# enable_vpc_flow_logs       = true
+# flow_log_retention_days    = 30
+# enable_detailed_monitoring = true
+# authentik_hostname_override = ""   # Leave empty to auto-compute <eip>.sslip.io
