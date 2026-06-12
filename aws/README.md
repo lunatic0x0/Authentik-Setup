@@ -2,7 +2,7 @@
 
 This walks you through deploying Authentik on a hardened EC2 instance in the lab AWS account, then federating it with AWS IAM Identity Center. Written for someone new to both Terraform and Authentik — every step explained, no skipped detail.
 
-**What you end up with:** an Ubuntu 24.04 EC2 (matching MITRE ER8) running Authentik behind Caddy with a real Let's Encrypt TLS cert, no SSH, IMDSv2-only, encrypted disk, VPC flow logs to CloudWatch. About **$37/mo** while running 24/7. Full teardown with one command.
+**What you end up with:** an Ubuntu 24.04 EC2 running Authentik behind Caddy with a real Let's Encrypt TLS cert, no SSH, IMDSv2-only, encrypted disk, VPC flow logs to CloudWatch. About **$37/mo** while running 24/7. Full teardown with one command.
 
 ---
 
@@ -57,7 +57,7 @@ session-manager-plugin        # (verify) should print "The Session Manager plugi
 
 ## Part 2 — Configure AWS credentials
 
-The S1 lab account uses **traditional IAM username/password login** (not AWS SSO). For Terraform we don't use the password — we use an **access key pair** (an access key ID + a secret access key) tied to your IAM user.
+This setup uses **traditional IAM username/password login** (not AWS SSO). For Terraform we don't use the password — we use an **access key pair** (an access key ID + a secret access key) tied to your IAM user.
 
 > **Quick concept:** an IAM user can sign in to the console with a password and sign in to the CLI / Terraform / SDKs with an access key pair. They're two parallel credentials on the same user. Terraform always uses the access key pair.
 
@@ -77,7 +77,7 @@ The S1 lab account uses **traditional IAM username/password login** (not AWS SSO
 ### 2b. Configure the AWS CLI with these credentials
 
 ```bash
-aws configure --profile s1-lab
+aws configure --profile authentik-lab
 ```
 
 It will prompt:
@@ -95,7 +95,7 @@ This writes two files in your home directory:
 ### 2c. Tell your shell to use this profile for the rest of the session
 
 ```bash
-export AWS_PROFILE=s1-lab
+export AWS_PROFILE=authentik-lab
 aws sts get-caller-identity
 ```
 
@@ -107,7 +107,7 @@ The `get-caller-identity` command should print your AWS account ID, your IAM use
 
 ### 2d. (Later, separate concern) AWS IAM Identity Center for federation
 
-Don't confuse Part 2 (how *you* authenticate to deploy) with the federation we set up later (how *eval users* will log in via Authentik). Even though your personal admin uses IAM username/password, we still **enable AWS IAM Identity Center inside the lab account** in Part 11 — because that's the service that brokers SAML logins from Authentik for the MITRE eval scenario. They are independent: your IAM user keeps working for Terraform after federation is set up.
+Don't confuse Part 2 (how *you* authenticate to deploy) with the federation we set up later (how *eval users* will log in via Authentik). Even though your personal admin uses IAM username/password, we still **enable AWS IAM Identity Center inside the lab account** in Part 11 — because that's the service that brokers SAML logins from Authentik. They are independent: your IAM user keeps working for Terraform after federation is set up.
 
 ## Part 3 — Configure your Terraform variables
 
@@ -295,7 +295,7 @@ You should see an XML document starting with `<md:EntityDescriptor ...>`. If you
 
 ## Part 11 — Configure AWS IAM Identity Center
 
-Switch to the AWS console (in the S1 lab account).
+Switch to the AWS console.
 
 1. Make sure Identity Center is enabled. **IAM Identity Center → Get started → Enable** if not already.
 2. **Settings → Identity source → Actions → Change identity source → External identity provider → Next**.
@@ -391,7 +391,7 @@ terraform destroy
 # Type 'yes' when prompted
 ```
 
-Removes **everything** — VPC, EC2, EBS, EIP, IAM role, CloudWatch logs. The S1 lab AWS account otherwise untouched.
+Removes **everything** — VPC, EC2, EBS, EIP, IAM role, CloudWatch logs. Your AWS account is otherwise untouched.
 
 ---
 
@@ -422,7 +422,7 @@ Removes **everything** — VPC, EC2, EBS, EIP, IAM role, CloudWatch logs. The S1
 
 ## What's next
 
-Once federation is working and you've logged in as `test.user` a few times to generate events, ping me and we'll:
+Once federation is working and you've logged in as `test.user` a few times to generate events, suggested next steps are:
 
 1. Wire Authentik's `authentik_events_event` rows + CloudTrail into the same pipeline.
-2. Build the first detection candidates around `sts:AssumeRoleWithSAML`, MFA bypass, impersonation, and unusual session role chaining — the ER8 in-scope identity techniques.
+2. Build detection rules around `sts:AssumeRoleWithSAML`, MFA bypass, impersonation, and unusual session role chaining.

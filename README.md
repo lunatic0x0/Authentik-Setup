@@ -1,6 +1,6 @@
-# Authentik Local Lab — MITRE Eval 2026 (ER8) Prep
+# Authentik Local Lab
 
-A minimal, reproducible local Authentik deployment for detection-engineering work against the same IdP MITRE is using in ER8. Targeted at macOS + Docker Desktop.
+A minimal, reproducible local Authentik deployment. Targeted at macOS + Docker Desktop.
 
 ---
 
@@ -63,25 +63,11 @@ docker compose exec server ak --version
 docker compose down -v && rm -rf media custom-templates certs .env
 ```
 
-## 5. Where the audit data lives
-
-Authentik writes **`authentik_events_event`** rows to Postgres for every meaningful action: logins, failed logins, MFA challenges, policy executions, password resets, token issuance, OAuth/SAML grants, group changes, impersonation, etc. These are the rows you'll eventually want to ship into S1 (or whatever pipeline you use for MITRE eval visibility). We'll wire that up in the next iteration — the env already runs at `info` and supports flipping to `debug` for richer signal.
-
-A quick browse:
-
-```bash
-docker compose exec postgresql \
-  psql -U authentik -d authentik \
-  -c "SELECT action, user, context FROM authentik_events_event ORDER BY created DESC LIMIT 25;"
-```
-
-The web UI also surfaces these at **Events → Logs** and **Events → System Tasks**.
-
 ---
 
 ## 6. Connecting local Authentik to your AWS account
 
-**Short answer: yes, it can be done — but AWS needs to reach your Authentik metadata URL.** That's the gotcha with running an IdP on a laptop. Three patterns, in order of how closely they likely match the MITRE ER8 setup:
+**Short answer: yes, it can be done — but AWS needs to reach your Authentik metadata URL.** That's the gotcha with running an IdP on a laptop. Three patterns:
 
 ### Option A — SAML 2.0 to AWS IAM Identity Center (recommended)
 
@@ -93,21 +79,21 @@ This is what most enterprises run today and is the cleanest fit for an "Authenti
 - AWS pulls Authentik's metadata from `http://<your-authentik>/api/v3/providers/saml/<pk>/metadata/?download`. **AWS cannot reach `localhost`.** You expose Authentik through one of:
   - Cloudflare Tunnel (`cloudflared tunnel --url http://localhost:9000`) — free, no firewall config, gives you a stable `*.trycloudflare.com` URL.
   - `ngrok http 9000` — same idea.
-  - A small EC2 / Lightsail reverse proxy in the eval AWS account pointing back at a tailnet'd Authentik (cleanest, but more work).
+  - A small EC2 / Lightsail reverse proxy in the lab AWS account pointing back at a tailnet'd Authentik (cleanest, but more work).
 
 > Pin a static hostname before you wire up SAML. SAML metadata embeds the IdP entity ID — if the hostname changes you re-import metadata everywhere.
 
 ### Option B — SAML 2.0 directly to IAM roles (classic federation)
 
-Same shape as Option A but you create a SAML IdP entity inside the AWS account directly (`IAM → Identity providers → Add provider → SAML`). You then create one or more roles that **trust** that SAML provider and Authentik users assume them via the AWS console SSO landing page. Lower blast radius and easier to spin up for a single account, but it's the older pattern — MITRE eval emulation may or may not follow this depending on how the target enterprise is modeled.
+Same shape as Option A but you create a SAML IdP entity inside the AWS account directly (`IAM → Identity providers → Add provider → SAML`). You then create one or more roles that **trust** that SAML provider and Authentik users assume them via the AWS console SSO landing page. Lower blast radius and easier to spin up for a single account, but it's the older pattern.
 
 ### Option C — OIDC web identity to IAM roles
 
-Authentik exposes an OIDC issuer; AWS supports OIDC IdPs for role assumption (`sts:AssumeRoleWithWebIdentity`). Less common for human-user SSO; more common for CI / workload federation. Skip unless ER8 specifically scopes this.
+Authentik exposes an OIDC issuer; AWS supports OIDC IdPs for role assumption (`sts:AssumeRoleWithWebIdentity`). Less common for human-user SSO; more common for CI / workload federation. Skip unless your project scope includes workload federation.
 
-### My recommendation
+### Recommended approach
 
-Start with **Option A (Identity Center via SAML)**, fronted by a **Cloudflare Tunnel**. It mirrors the realistic enterprise topology MITRE is likely emulating, gives you both Authentik audit logs and CloudTrail `sts:AssumeRoleWithSAML` events to correlate against, and the tunnel sidesteps the "AWS can't reach my laptop" wall without opening any inbound ports.
+Start with **Option A (Identity Center via SAML)**, fronted by a **Cloudflare Tunnel**. 
 
 What you'll need from the AWS lab:
 
@@ -123,7 +109,7 @@ Once the stack is healthy and you've confirmed the lab AWS prerequisites, the ne
 1. Stand up a Cloudflare Tunnel and a stable hostname.
 2. Wire Authentik ↔ AWS Identity Center (Option A) end-to-end with a single test user.
 3. Drive sample logons (success + failure + MFA + impersonation) and verify both Authentik `authentik_events_event` rows **and** CloudTrail `sts:AssumeRoleWithSAML` / `Federate` events are produced.
-4. Sketch the first detection candidates from those two correlated streams — that's where the red-team / detection-engineering work starts paying off for ER8.
+4. Sketch the first detection candidates from those two correlated streams — that's where the detection-engineering work starts.
 
 ---
 
@@ -142,4 +128,3 @@ Once the stack is healthy and you've confirmed the lab AWS prerequisites, the ne
 - Authentik docs: https://docs.goauthentik.io/
 - Compose install reference: https://docs.goauthentik.io/docs/install-config/install/docker-compose
 - AWS Identity Center external IdP: https://docs.aws.amazon.com/singlesignon/latest/userguide/manage-your-identity-source-idp.html
-- MITRE ATT&CK Evaluations ER8 scope: https://evals.mitre.org/enterprise/er8
